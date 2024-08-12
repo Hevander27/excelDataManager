@@ -1,0 +1,284 @@
+Sub PerformDBSCAN()
+    ' Author: Hevander Da Costa (Modified for cross-platform compatibility)
+    ' Date: 08/09/2024
+    ' This macro performs DBSCAN clustering on selected columns of data.
+    ' Modified to work on both Windows and Mac versions of Excel.
+   
+    Dim ws As Worksheet
+    Dim lastRow As Long
+    Dim data() As Variant
+    Dim i As Long, j As Long, col As Long
+    Dim eps As Double
+    Dim minPts As Integer
+    Dim clusters() As Integer
+    Dim clusterCount As Integer
+    Dim selectedRange As Range
+    Dim startColumn As Long, endColumn As Long
+    Dim startRow As Long
+
+    ' Disable screen updating and set calculation to manual
+    Application.ScreenUpdating = False
+    Application.Calculation = xlCalculationManual
+
+    On Error GoTo CleanExit
+   
+    ' Set the worksheet
+    Set ws = ActiveSheet
+
+    ' Prompt user to select the range
+    On Error Resume Next
+    Set selectedRange = Application.InputBox("Select the range for your data", Type:=8)
+    On Error GoTo 0
+
+    If selectedRange Is Nothing Then
+        MsgBox "Operation cancelled."
+        GoTo CleanExit
+    End If
+
+    startColumn = selectedRange.Column
+    endColumn = startColumn + selectedRange.Columns.Count - 1
+    startRow = selectedRange.Row
+
+    ' Find the last row with data
+    lastRow = ws.Cells(ws.Rows.Count, startColumn).End(xlUp).Row
+
+    ' Loop through each column in the selected range
+    For col = startColumn To endColumn
+        ' Read data from the current column into an array
+        ReDim data(1 To lastRow - startRow + 1)
+        For i = startRow To lastRow
+            data(i - startRow + 1) = ws.Cells(i, col).Value
+        Next i
+
+        ' Automatically estimate DBSCAN parameters
+        eps = EstimateEpsilon(data)
+        minPts = EstimateMinPts(UBound(data))
+
+        ' Perform DBSCAN
+        clusters = DBSCAN(data, eps, minPts, clusterCount)
+
+        ' Color cells based on cluster assignments
+        For i = 1 To UBound(clusters)
+            If clusters(i) = -1 Then
+                ' Noise points (not part of any cluster)
+                ws.Cells(i + startRow - 1, col).Interior.Color = RGB(200, 200, 200) ' Gray
+            Else
+                ' Assign a color based on the cluster number
+                ws.Cells(i + startRow - 1, col).Interior.Color = GetClusterColor(clusters(i))
+            End If
+        Next i
+
+        ' Preserve the header cell formatting (assumes header is in the row above the start cell)
+        ws.Cells(startRow - 1, col).Interior.ColorIndex = xlNone
+
+        MsgBox "DBSCAN clustering completed for column " & Split(Cells(1, col).Address, "$")(1) & "." & vbNewLine & _
+               clusterCount & " clusters found." & vbNewLine & _
+               "Estimated parameters: eps = " & Round(eps, 4) & ", minPts = " & minPts
+    Next col
+
+CleanExit:
+    ' Re-enable screen updating and automatic calculations
+    Application.ScreenUpdating = True
+    Application.Calculation = xlCalculationAutomatic
+End Sub
+
+Function EstimateEpsilon(data() As Variant) As Double
+    Dim distances() As Double
+    Dim n As Long, i As Long, j As Long, k As Long
+    Dim sortedDistances() As Double
+    Dim maxSamples As Long
+   
+    n = UBound(data)
+    maxSamples = Application.Min(100000, n * 10) ' Limit the number of samples
+    ReDim distances(1 To maxSamples)
+   
+    ' Calculate a sample of pairwise distances
+    k = 1
+    For i = 1 To n - 1
+        For j = i + 1 To n
+            If k > maxSamples Then Exit For
+            distances(k) = Abs(data(i) - data(j))
+            k = k + 1
+        Next j
+        If k > maxSamples Then Exit For
+    Next i
+   
+    ' Adjust the array size if we didn't fill it completely
+    If k <= maxSamples Then
+        ReDim Preserve distances(1 To k - 1)
+    End If
+   
+    ' Sort distances
+    sortedDistances = QuickSort(distances)
+   
+    ' Estimate epsilon as the average of the 10th and 20th percentile distances
+    Dim tenthPercentile As Double, twentiethPercentile As Double
+    Dim tenthIndex As Long, twentiethIndex As Long
+   
+    tenthIndex = Application.Max(1, Application.RoundUp(UBound(sortedDistances) * 0.1, 0))
+    twentiethIndex = Application.Max(1, Application.RoundUp(UBound(sortedDistances) * 0.2, 0))
+   
+    tenthPercentile = sortedDistances(tenthIndex)
+    twentiethPercentile = sortedDistances(twentiethIndex)
+   
+    EstimateEpsilon = (tenthPercentile + twentiethPercentile) / 2
+End Function
+
+Function EstimateMinPts(n As Long) As Integer
+    ' Estimate minPts as log(n), with a minimum of 3 and maximum of 5
+    EstimateMinPts = Application.WorksheetFunction.Min(Application.WorksheetFunction.Max(3, Application.WorksheetFunction.RoundUp(Log(n), 0)), 5)
+End Function
+
+Function QuickSort(arr() As Double) As Double()
+    Dim stack(1 To 1000, 1 To 2) As Long
+    Dim Top As Long
+    Dim Left As Long, right As Long
+    Dim i As Long, j As Long
+    Dim pivot As Double
+    Dim temp As Double
+   
+    Top = 1
+    stack(Top, 1) = LBound(arr)
+    stack(Top, 2) = UBound(arr)
+   
+    Do While Top > 0
+        Left = stack(Top, 1)
+        right = stack(Top, 2)
+        Top = Top - 1
+       
+        Do
+            i = Left
+            j = right
+            pivot = arr((Left + right) \ 2)
+           
+            Do While i <= j
+                Do While arr(i) < pivot And i < UBound(arr)
+                    i = i + 1
+                Loop
+                Do While arr(j) > pivot And j > LBound(arr)
+                    j = j - 1
+                Loop
+                If i <= j Then
+                    temp = arr(i)
+                    arr(i) = arr(j)
+                    arr(j) = temp
+                    i = i + 1
+                    j = j - 1
+                End If
+            Loop
+           
+            If i < right Then
+                Top = Top + 1
+                stack(Top, 1) = i
+                stack(Top, 2) = right
+            End If
+            right = j
+        Loop While Left < right
+    Loop
+   
+    QuickSort = arr
+End Function
+
+Function DBSCAN(data() As Variant, eps As Double, minPts As Integer, ByRef clusterCount As Integer) As Integer()
+    Dim n As Long
+    Dim clusters() As Integer
+    Dim i As Long, j As Long
+    Dim neighbors() As Long
+    Dim stack() As Long
+    Dim stackSize As Long
+   
+    n = UBound(data)
+    ReDim clusters(1 To n)
+    clusterCount = 0
+   
+    For i = 1 To n
+        If clusters(i) = 0 Then
+            neighbors = RangeQuery(data, i, eps)
+            If UBound(neighbors) >= 0 And UBound(neighbors) + 1 >= minPts Then
+                clusterCount = clusterCount + 1
+                clusters(i) = clusterCount
+               
+                ReDim stack(1 To n)
+                stackSize = 0
+               
+                For j = 0 To UBound(neighbors)
+                    stackSize = stackSize + 1
+                    stack(stackSize) = neighbors(j)
+                Next j
+               
+                Do While stackSize > 0
+                    Dim current As Long
+                    current = stack(stackSize)
+                    stackSize = stackSize - 1
+                   
+                    If clusters(current) = 0 Or clusters(current) = -1 Then
+                        clusters(current) = clusterCount
+                       
+                        Dim currentNeighbors() As Long
+                        currentNeighbors = RangeQuery(data, current, eps)
+                       
+                        If UBound(currentNeighbors) >= 0 And UBound(currentNeighbors) + 1 >= minPts Then
+                            For j = 0 To UBound(currentNeighbors)
+                                Dim neighbor As Long
+                                neighbor = currentNeighbors(j)
+                                If clusters(neighbor) = 0 Then
+                                    stackSize = stackSize + 1
+                                    If stackSize > UBound(stack) Then
+                                        ReDim Preserve stack(1 To UBound(stack) * 2)
+                                    End If
+                                    stack(stackSize) = neighbor
+                                End If
+                            Next j
+                        End If
+                    End If
+                Loop
+            Else
+                clusters(i) = -1 ' Mark as noise
+            End If
+        End If
+    Next i
+   
+    DBSCAN = clusters
+End Function
+
+Function RangeQuery(data() As Variant, pointIndex As Long, eps As Double) As Long()
+    Dim neighbors() As Long
+    Dim neighborCount As Long
+    Dim i As Long
+   
+    ReDim neighbors(0 To UBound(data) - 1)
+    neighborCount = 0
+   
+    For i = 1 To UBound(data)
+        If i <> pointIndex Then
+            If Abs(data(i) - data(pointIndex)) <= eps Then
+                neighbors(neighborCount) = i
+                neighborCount = neighborCount + 1
+            End If
+        End If
+    Next i
+   
+    If neighborCount > 0 Then
+        ReDim Preserve neighbors(0 To neighborCount - 1)
+    Else
+        ReDim neighbors(0 To 0)
+    End If
+   
+    RangeQuery = neighbors
+End Function
+
+Function GetClusterColor(clusterIndex As Integer) As Long
+    Dim colors(1 To 10) As Long
+    colors(1) = RGB(255, 204, 204)  ' Light Red
+    colors(2) = RGB(204, 255, 204)  ' Light Green
+    colors(3) = RGB(204, 204, 255)  ' Light Blue
+    colors(4) = RGB(255, 255, 204)  ' Light Yellow
+    colors(5) = RGB(255, 204, 255)  ' Light Magenta
+    colors(6) = RGB(204, 255, 255)  ' Light Cyan
+    colors(7) = RGB(255, 229, 204)  ' Light Orange
+    colors(8) = RGB(229, 204, 255)  ' Light Purple
+    colors(9) = RGB(204, 255, 229)  ' Light Mint Green
+    colors(10) = RGB(204, 229, 255) ' Light Sky Blue
+   
+    GetClusterColor = colors(((clusterIndex - 1) Mod 10) + 1)
+End Function

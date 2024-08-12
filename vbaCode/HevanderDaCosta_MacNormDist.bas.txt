@@ -1,0 +1,113 @@
+Sub HighlightNormalDistribution()
+    ' Author: Hevander Da Costa
+    ' Date: 08/09/2024
+    ' This macro highlights cells in a selected range based on their statistical distribution.
+    ' It calculates the mean and standard deviation of the numeric values in the range,
+    ' then applies thick border formatting to cells that fall outside a user-specified
+    ' number of standard deviations (sigma) from the mean. Values below the lower threshold
+    ' are highlighted with a green border, while values above the upper threshold are
+    ' highlighted with a red border. This helps to visually identify outliers or
+    ' significant data points within a dataset, facilitating data analysis and interpretation.
+
+    Dim ws As Worksheet
+    Dim rng As Range, userRange As Range, col As Range
+    Dim lastRow As Long, lastCol As Long
+    Dim mean As Double, stdDev As Double
+    Dim lowerBound As Double, upperBound As Double
+    Dim sigmaLevel As Double
+    Dim dataArray As Variant
+    Dim i As Long, j As Long
+    Dim entireColumns As Range
+   
+    ' Disable screen updating and set calculation to manual at the very beginning
+    Application.ScreenUpdating = False
+    Application.Calculation = xlCalculationManual
+   
+    On Error GoTo CleanExit
+   
+    ' Set the worksheet
+    Set ws = ActiveSheet
+   
+    ' Prompt user to select the range or starting cell
+    On Error Resume Next
+    Set userRange = Application.InputBox("Select the range or starting cell for your data:", Type:=8)
+    If userRange Is Nothing Then
+        MsgBox "No range selected. Operation cancelled."
+        GoTo CleanExit
+    End If
+    On Error GoTo 0
+   
+    ' Prompt user for sigma level
+    Do
+        sigmaLevel = Val(InputBox("Enter sigma level (e.g., 1, 1.5, 2, 2.5, 3):"))
+        If sigmaLevel <= 0 Or sigmaLevel > 3 Then
+            MsgBox "Please enter a value between 0 and 3 for the sigma level."
+        End If
+    Loop Until sigmaLevel > 0 And sigmaLevel <= 3
+   
+    ' Determine the range to process
+    If userRange.Cells.count = 1 Then
+        lastRow = ws.Cells(ws.Rows.count, userRange.Column).End(xlUp).Row
+        lastCol = userRange.Column
+    Else
+        lastRow = ws.Cells(ws.Rows.count, userRange.Columns(userRange.Columns.count).Column).End(xlUp).Row
+        lastCol = userRange.Column + userRange.Columns.count - 1
+    End If
+    Set rng = ws.Range(ws.Cells(userRange.Row, userRange.Column), ws.Cells(lastRow, lastCol))
+   
+    ' Clear existing border formatting for the entire columns in the range
+    Set entireColumns = rng.EntireColumn
+    entireColumns.Borders.LineStyle = xlNone
+   
+    ' Process each column separately
+    For Each col In rng.Columns
+        ' Load data into an array for faster processing
+        dataArray = col.Value
+       
+        ' Calculate mean and standard deviation
+        Dim sumX As Double, sumX2 As Double, count As Long
+        sumX = 0: sumX2 = 0: count = 0
+        For i = 1 To UBound(dataArray, 1)
+            If IsNumeric(dataArray(i, 1)) And dataArray(i, 1) <> "" Then
+                sumX = sumX + dataArray(i, 1)
+                sumX2 = sumX2 + dataArray(i, 1) ^ 2
+                count = count + 1
+            End If
+        Next i
+       
+        If count > 0 Then
+            mean = sumX / count
+            stdDev = Sqr((sumX2 / count) - (mean ^ 2))
+           
+            ' Calculate bounds based on sigma level
+            lowerBound = mean - (sigmaLevel * stdDev)
+            upperBound = mean + (sigmaLevel * stdDev)
+           
+            ' Apply formatting directly to cells
+            Dim cell As Range
+            For i = 1 To UBound(dataArray, 1)
+                If IsNumeric(dataArray(i, 1)) And dataArray(i, 1) <> "" Then
+                    Set cell = col.Cells(i)
+                    With cell.Borders
+                        .LineStyle = xlContinuous
+                        .Weight = xlThick
+                        If dataArray(i, 1) <= lowerBound Then
+                            .Color = RGB(0, 176, 80) ' Green
+                        ElseIf dataArray(i, 1) >= upperBound Then
+                            .Color = RGB(192, 0, 0) ' Dark Red
+                        Else
+                            .LineStyle = xlNone
+                        End If
+                    End With
+                End If
+            Next i
+        End If
+    Next col
+   
+    MsgBox "Highlighting based on " & sigmaLevel & " sigma completed for the selected range."
+
+CleanExit:
+    ' Re-enable screen updating and automatic calculations
+    Application.ScreenUpdating = True
+    Application.Calculation = xlCalculationAutomatic
+End Sub

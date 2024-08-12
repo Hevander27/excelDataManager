@@ -1,0 +1,156 @@
+Sub Pivot_Table_AgentCalls()
+    ' Author: Hevander Da Costa
+    ' Date: 08/09/2024
+    ' This macro creates a comprehensive report on agent calls using a PivotTable, chart, and slicer.
+    ' It sources data from a 'Source' worksheet, creates or clears a 'Report_Agent' worksheet,
+    ' and generates a PivotTable summarizing agent calls by day and node name. The macro also
+    ' creates a line chart based on the PivotTable data and adds a slicer for easy filtering
+    ' by node name. This automated report generation streamlines data analysis, providing
+    ' visual representations of call patterns and interactive filtering capabilities,
+    ' facilitating quick insights into agent call performance across different nodes and time periods.
+    
+    Dim wb As Workbook
+    Dim wsSource As Worksheet, wsTarget As Worksheet
+    Dim lastRow As Long
+    Dim SourceDataRange As Range
+    Dim pt As PivotTable
+    Dim PC As PivotCache
+    Dim NodeField As PivotField
+    Dim NodeItem As PivotItem
+    Dim pf As PivotField
+    Dim cht As Chart
+    Dim slicer As Object
+
+    On Error GoTo errHandler
+
+    Set wb = ThisWorkbook
+
+    ' Check if source worksheet exists
+    On Error Resume Next
+    Set wsSource = wb.Worksheets("Source")
+    On Error GoTo 0
+    If wsSource Is Nothing Then
+        MsgBox "Source worksheet 'Source' not found!", vbExclamation
+        Exit Sub
+    End If
+
+    ' Check if target worksheet exists, if not create it
+    On Error Resume Next
+    Set wsTarget = wb.Worksheets("Report_Agent")
+    On Error GoTo 0
+    If wsTarget Is Nothing Then
+        Set wsTarget = wb.Worksheets.Add
+        wsTarget.Name = "Report_Agent"
+    End If
+
+    wsTarget.Cells.Clear
+
+    ' Define pivot table data source
+    With wsSource
+        lastRow = .Cells(.Rows.count, "D").End(xlUp).Row
+        Set SourceDataRange = .Range("D4:H" & lastRow)
+    End With
+
+    ' Create PivotCache
+    Set PC = wb.PivotCaches.Create(SourceType:=xlDatabase, SourceData:=SourceDataRange)
+    
+    ' Create PivotTable
+    Set pt = PC.CreatePivotTable(TableDestination:=wsTarget.Range("A1"), TableName:="TotalCallsPivot")
+
+    ' Add fields to PivotTable
+    With pt
+        '-----------------Add Day to Row Field-----------------------
+        With .PivotFields("Day")
+            .Orientation = xlRowField
+            .Position = 1
+        End With
+        If Err.Number <> 0 Then
+            Debug.Print "Error adding callDate field: " & Err.Description
+            Err.Clear
+        End If
+        
+        '-----------------Add nodeName to Column Field--------------------
+        With .PivotFields("nodeName")
+            .Orientation = xlColumnField
+            .Position = 1
+        End With
+        If Err.Number <> 0 Then
+            Debug.Print "Error adding nodeName field: " & Err.Description
+            Err.Clear
+        End If
+        
+        '------------------Add Ratio to Values Field----------------------
+        With .PivotFields("Agent Calls")
+            .Orientation = xlDataField
+            .Function = xlSum
+            .NumberFormat = "0"
+            .Name = "Sum of Agent Calls"
+        End With
+        If Err.Number <> 0 Then
+            Debug.Print "Error adding Ratio field: " & Err.Description
+            Err.Clear
+        End If
+        
+    End With
+
+    ' Additional PivotTable settings
+    pt.ColumnGrand = True
+    pt.RowGrand = False
+    pt.TableStyle2 = "PivotStyleLight16"
+    pt.RowAxisLayout xlTabularRow
+
+    ' AutoFit columns
+    wsTarget.Columns.AutoFit
+
+    ' Create a line chart
+    Set cht = wsTarget.Shapes.AddChart2(201, xlLine).Chart
+    
+    ' Set the chart's data source to the PivotTable; do not include legend
+    cht.SetSourceData Source:=pt.TableRange1
+    cht.HasLegend = False
+    ' Position the chart
+    With cht.Parent
+        .Top = pt.TableRange1.Offset(0, pt.TableRange1.Columns.count + 1).Top
+        .Left = pt.TableRange1.Offset(0, pt.TableRange1.Columns.count + 1).Left
+        .Width = 400
+        .Height = 300
+    End With
+    
+    ' Add a slicer for the nodeName field
+    On Error Resume Next
+    Set slicer = pt.Slicers.Add("nodeName", "NodeName Slicer", "NodeName Slicer", , True)
+    If slicer Is Nothing Then
+        Set slicer = ActiveWorkbook.SlicerCaches.Add2(pt, "nodeName").Slicers.Add(wsTarget)
+    End If
+    On Error GoTo 0
+
+    
+    If Not slicer Is Nothing Then
+        ' Position the slicer
+        With slicer.Shape
+            .Top = cht.Parent.Top + cht.Parent.Height + 20
+            .Left = cht.Parent.Left
+        End With
+    Else
+        MsgBox "Unable to create slicer. Your Excel version may not support this feature.", vbInformation
+    End If
+    
+
+CleanUp:
+    Set slicer = Nothing
+    Set cht = Nothing
+    Set pt = Nothing
+    Set PC = Nothing
+    Set SourceDataRange = Nothing
+    Set wsSource = Nothing
+    Set wsTarget = Nothing
+    Set wb = Nothing
+    Exit Sub
+
+errHandler:
+    MsgBox "Error: " & Err.Number & ": " & Err.Description & vbNewLine & _
+        "in procedure Pivot_Table_Ratio, line " & Erl, vbExclamation
+    Resume CleanUp
+End Sub
+
+

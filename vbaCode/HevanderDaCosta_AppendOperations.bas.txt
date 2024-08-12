@@ -1,0 +1,189 @@
+Sub CombinedTableOperations()
+    ' Author: Hevander Da Costa
+    ' Date: 08/09/2024
+    ' Use in "macroDBManger" file
+    ' This macro performs a series of operations on Excel tables, focusing on data extension
+    ' and appending. It first identifies the largest table in the active worksheet, then
+    ' extends this table based on date ranges extracted from an SQL script. The extension
+    ' can occur at the beginning or end of the table, depending on the SQL date range.
+    ' After extension, it loads data from an "AppendTable" connection, and pastes this data
+    ' into the extended table, either at the beginning or end, based on where the extension
+    ' occurred. This macro is useful for synchronizing table data with external sources,
+    ' ensuring the table covers the required date range, and appending new data efficiently.
+    
+    Dim ws As Worksheet
+    Dim tbl As ListObject
+    Dim biggestTable As ListObject
+    Dim maxCells As Long
+    Dim tableRange As Range
+    Dim sqlScript As String
+    Dim daysToExtend As Long
+    Dim i As Long, j As Long
+    Dim multiplicationFactor As Long
+    Dim firstValue As Variant
+    Dim sqlStartDate As Date, sqlEndDate As Date
+    Dim tableStartDate As Date, tableEndDate As Date
+    Dim reportStartDate As Date, reportEndDate As Date
+    Dim isFiltered As Boolean
+    
+    ' Part 1: GetBiggestTableInfo and table extension
+    Set ws = ActiveSheet
+    maxCells = 0
+    
+    sqlScript = ws.Range("A2").Value
+    
+    If ws.ListObjects.count = 0 Then
+        MsgBox "No tables found in the active worksheet.", vbInformation
+        Exit Sub
+    End If
+    
+    For Each tbl In ws.ListObjects
+        If tbl.Range.Cells.count > maxCells Then
+            Set biggestTable = tbl
+            maxCells = tbl.Range.Cells.count
+        End If
+    Next tbl
+    
+    Set tableRange = biggestTable.Range
+    Dim orgLastRow As Long
+    orgLastRow = tableRange.Row + tableRange.Rows.count - 1
+    
+    firstValue = biggestTable.ListColumns(1).DataBodyRange.Cells(1, 1).Value
+    tableStartDate = CDate(firstValue)
+    tableEndDate = CDate(biggestTable.ListColumns(1).DataBodyRange.Cells(biggestTable.ListRows.count, 1).Value)
+    
+    For i = 2 To biggestTable.ListRows.count
+        If biggestTable.ListColumns(1).DataBodyRange.Cells(i, 1).Value <> firstValue Then
+            multiplicationFactor = i - 1
+            Exit For
+        End If
+    Next i
+    
+    isFiltered = biggestTable.AutoFilter.FilterMode
+    If isFiltered Then
+        biggestTable.AutoFilter.ShowAllData
+    End If
+    
+    sqlStartDate = CDate(ExtractDate(sqlScript, ">="))
+    sqlEndDate = CDate(ExtractDate(sqlScript, "<="))
+    
+    If sqlStartDate < tableStartDate Then
+        reportStartDate = sqlStartDate
+        reportEndDate = DateAdd("d", -1, tableStartDate)
+        daysToExtend = DateDiff("d", reportStartDate, reportEndDate) + 1
+        For i = 1 To daysToExtend * multiplicationFactor
+            biggestTable.ListRows.Add (1)
+        Next i
+    
+    ElseIf sqlEndDate > tableEndDate Then
+        reportStartDate = DateAdd("d", 1, tableEndDate)
+        reportEndDate = sqlEndDate
+        daysToExtend = DateDiff("d", reportStartDate, reportEndDate)
+        
+        For i = 1 To daysToExtend
+            biggestTable.ListRows.Add
+        Next i
+        
+        daysToExtend = 0
+    End If
+    
+    
+    
+    ' Part 2: LoadAppendTableToMemoryAndPasteWithoutHeaders
+    Dim wb As Workbook
+    Dim conn As WorkbookConnection
+    Dim connFound As Boolean
+    Dim qry As queryTable
+    Dim tempSheet As Worksheet
+    Dim dataRange As Range
+    Dim destinationRange As Range
+    Dim lastRow As Long
+    
+    Set wb = ThisWorkbook
+    Set ws = ActiveSheet ' Use the same worksheet as in Part 1
+    
+    connFound = False
+    For Each conn In wb.Connections
+        If InStr(1, conn.Name, "AppendTable", vbTextCompare) > 0 Then
+            connFound = True
+            Exit For
+        End If
+    Next conn
+    
+    If Not connFound Then
+        MsgBox "AppendTable connection not found!", vbExclamation
+        Exit Sub
+    End If
+    
+    Set tempSheet = wb.Worksheets.Add
+    tempSheet.Visible = xlSheetVeryHidden
+    
+    Set qry = tempSheet.QueryTables.Add(Connection:=conn, Destination:=tempSheet.Range("A1"))
+    
+    With qry
+        .FieldNames = True
+        .RowNumbers = False
+        .FillAdjacentFormulas = False
+        .PreserveFormatting = True
+        .RefreshOnFileOpen = False
+        .BackgroundQuery = True
+        .RefreshStyle = xlOverwriteCells
+        .SavePassword = False
+        .SaveData = True
+        .AdjustColumnWidth = True
+        .RefreshPeriod = 0
+        .PreserveColumnInfo = True
+        .Refresh BackgroundQuery:=False
+    End With
+    
+    Set dataRange = tempSheet.UsedRange.Offset(1, 0).Resize(tempSheet.UsedRange.Rows.count - 1, tempSheet.UsedRange.Columns.count)
+    
+    ' Determine the destination range based on where rows were added
+    If sqlStartDate < tableStartDate Then
+        ' Rows were added at the beginning, so start one row under the header
+        Set destinationRange = biggestTable.HeaderRowRange.Offset(1, 0)
+    Else
+        ' Rows were added at the end or no rows were added, so start one row below the last populated row
+        'lastRow = biggestTable.Range.Find(What:="*", After:=biggestTable.Range.Cells(1, 1), LookIn:=xlFormulas, LookAt:=xlPart, SearchOrder:=xlByRows, SearchDirection:=xlPrevious, MatchCase:=False).row
+        Set destinationRange = biggestTable.Range.Cells(orgLastRow - multiplicationFactor, 1)
+    End If
+    
+    destinationRange.Resize(dataRange.Rows.count, dataRange.Columns.count).Value = dataRange.Value
+    
+    ' Delete the temporary sheet
+    'Application.DisplayAlerts = False
+    'On Error Resume Next
+    'Dim tempSheetIndex As Integer
+    'tempSheetIndex = tempSheet.index
+    'wb.Worksheets(tempSheetIndex).Delete
+    'If Err.Number <> 0 Then
+    '    Debug.Print "Failed to delete sheet: " & Err.Description
+    '    MsgBox "Unable to delete temporary sheet. Please delete sheet '" & tempSheet.Name & "' manually.", vbExclamation
+    'End If
+    'On Error GoTo 0
+    'Application.DisplayAlerts = True
+        
+
+    ' Efficiently check and extend the table if necessary
+    Dim lastDataRow As Long, lastTableRow As Long
+    Dim lastDataColumn As Long, lastTableColumn As Long
+    
+    ' Find the last row and column of the pasted data
+    lastDataRow = destinationRange.Row + dataRange.Rows.count - 1
+    lastDataColumn = destinationRange.Column + dataRange.Columns.count - 1
+    
+    ' Get the current table dimensions
+    With biggestTable.Range
+        lastTableRow = .Row + .Rows.count - 1
+        lastTableColumn = .Column + .Columns.count - 1
+    End With
+    
+    ' Extend the table if necessary
+    If lastDataRow > lastTableRow Or lastDataColumn > lastTableColumn Then
+        biggestTable.Resize biggestTable.Range.Resize(Application.Max(lastDataRow - biggestTable.Range.Row + 1, biggestTable.Range.Rows.count), _
+                                                      Application.Max(lastDataColumn - biggestTable.Range.Column + 1, biggestTable.Range.Columns.count))
+    End If
+        
+    destinationRange.CurrentRegion.Columns.AutoFit
+    
+End Sub

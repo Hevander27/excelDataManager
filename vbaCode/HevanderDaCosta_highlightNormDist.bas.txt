@@ -1,0 +1,126 @@
+Sub HighlightNormalDistribution()
+    ' Author: Hevander Da Costa
+    ' Date: 08/09/2024
+    ' This macro highlights cells in a selected range based on their statistical distribution.
+    ' It calculates the mean and standard deviation of the numeric values in the range,
+    ' then applies thick border formatting to cells that fall outside a user-specified
+    ' number of standard deviations (sigma) from the mean. Values below the lower threshold
+    ' are highlighted with a green border, while values above the upper threshold are
+    ' highlighted with a red border. This helps to visually identify outliers or
+    ' significant data points within a dataset, facilitating data analysis and interpretation.
+
+    Dim ws As Worksheet
+    Dim rng As Range, userRange As Range
+    Dim lastRow As Long, lastCol As Long
+    Dim mean As Double, stdDev As Double
+    Dim lowerBound As Double, upperBound As Double
+    Dim sigmaLevel As Double
+    Dim dataArray As Variant
+    Dim i As Long, j As Long
+    Dim entireColumns As Range
+    
+    Application.ScreenUpdating = False
+    Application.Calculation = xlCalculationManual
+    
+    ' Set the worksheet
+    Set ws = ActiveSheet
+    
+    ' Prompt user to select the range or starting cell
+    On Error Resume Next
+    Set userRange = Application.InputBox("Select the range or starting cell for your data:", Type:=8)
+    If userRange Is Nothing Then
+        MsgBox "No range selected. Operation cancelled."
+        GoTo CleanExit
+    End If
+    On Error GoTo 0
+    
+    ' Prompt user for sigma level
+    Do
+        sigmaLevel = Application.InputBox("Enter sigma level (e.g., 1, 1.5, 2, 2.5, 3):", Type:=1)
+        If sigmaLevel <= 0 Or sigmaLevel > 3 Then
+            MsgBox "Please enter a value between 0 and 3 for the sigma level."
+        End If
+    Loop Until sigmaLevel > 0 And sigmaLevel <= 3
+    
+    ' Determine the range to process
+    If userRange.Cells.count = 1 Then
+        lastRow = ws.Cells(ws.Rows.count, userRange.Column).End(xlUp).Row
+        lastCol = userRange.Column
+    Else
+        lastRow = ws.Cells(ws.Rows.count, userRange.Columns(userRange.Columns.count).Column).End(xlUp).Row
+        lastCol = userRange.Columns(userRange.Columns.count).Column
+    End If
+    Set rng = ws.Range(ws.Cells(userRange.Row, userRange.Column), ws.Cells(lastRow, lastCol))
+    
+    ' Clear existing border formatting for the entire columns in the range
+    Set entireColumns = rng.entireColumn
+    entireColumns.Borders.LineStyle = xlNone
+    
+    ' Load data into an array for faster processing
+    dataArray = rng.Value
+    
+    ' Calculate mean and standard deviation
+    Dim sumX As Double, sumX2 As Double, count As Long
+    For i = 1 To UBound(dataArray, 1)
+        For j = 1 To UBound(dataArray, 2)
+            If IsNumeric(dataArray(i, j)) And dataArray(i, j) <> "" Then
+                sumX = sumX + dataArray(i, j)
+                sumX2 = sumX2 + dataArray(i, j) ^ 2
+                count = count + 1
+            End If
+        Next j
+    Next i
+    
+    If count > 0 Then
+        mean = sumX / count
+        stdDev = Sqr((sumX2 / count) - (mean ^ 2))
+        
+        ' Calculate bounds based on sigma level
+        lowerBound = mean - (sigmaLevel * stdDev)
+        upperBound = mean + (sigmaLevel * stdDev)
+        
+        ' Prepare formatting arrays
+        Dim borderStyles() As Variant
+        ReDim borderStyles(1 To UBound(dataArray, 1), 1 To UBound(dataArray, 2))
+        
+        ' Determine which cells need formatting
+        For i = 1 To UBound(dataArray, 1)
+            For j = 1 To UBound(dataArray, 2)
+                If IsNumeric(dataArray(i, j)) And dataArray(i, j) <> "" Then
+                    If dataArray(i, j) <= lowerBound Then
+                        borderStyles(i, j) = 1 ' Green
+                    ElseIf dataArray(i, j) >= upperBound Then
+                        borderStyles(i, j) = 2 ' Red
+                    End If
+                End If
+            Next j
+        Next i
+        
+        ' Apply formatting in one go
+        Dim cell As Range
+        For i = 1 To UBound(borderStyles, 1)
+            For j = 1 To UBound(borderStyles, 2)
+                If borderStyles(i, j) > 0 Then
+                    Set cell = rng.Cells(i, j)
+                    With cell.Borders
+                        .LineStyle = xlContinuous
+                        .Weight = xlThick
+                        If borderStyles(i, j) = 1 Then
+                            .Color = RGB(0, 176, 80) ' Green Accent 6
+                        Else
+                            .Color = RGB(192, 0, 0) ' Dark Red
+                        End If
+                    End With
+                End If
+            Next j
+        Next i
+        
+        MsgBox "Highlighting based on " & sigmaLevel & " sigma completed for the selected range."
+    Else
+        MsgBox "No numeric data found in the selected range."
+    End If
+
+CleanExit:
+    Application.ScreenUpdating = True
+    Application.Calculation = xlCalculationAutomatic
+End Sub

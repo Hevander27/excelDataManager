@@ -1,0 +1,79 @@
+Sub FormatCellsThresholds()
+    ' Author: Hevander Da Costa
+    ' Date: 08/09/2024
+    ' This macro formats cells in a selected column based on user-defined thresholds.
+    ' It prompts the user to input lower and upper threshold values, then applies
+    ' color formatting to the font of cells that fall outside these thresholds.
+    ' Values below or equal to the lower threshold are colored green, while values
+    ' above or equal to the upper threshold are colored red. This visual formatting
+    ' helps to quickly identify values that are below, above, or within the specified
+    ' range, facilitating data analysis and highlighting key data points.
+    
+    Dim ws As Worksheet
+    Dim startCell As Range
+    Dim lowerThresh As Double
+    Dim upperThresh As Double
+    Dim lastRow As Long
+    Dim dataRange As Range
+    Dim cell As Range
+    
+    ' Disable screen updating and automatic calculations for performance
+    Application.ScreenUpdating = False
+    Application.Calculation = xlCalculationManual
+    
+    ' Set the worksheet
+    Set ws = ActiveSheet
+    
+    ' Prompt user for parameters
+    On Error Resume Next
+    lowerThresh = Application.InputBox("Enter the lower threshold:", Type:=1)
+    If Err.Number <> 0 Or IsEmpty(lowerThresh) Then
+        MsgBox "Invalid input for lower threshold. Operation cancelled."
+        GoTo CleanExit
+    End If
+    
+    upperThresh = Application.InputBox("Enter the upper threshold:", Type:=1)
+    If Err.Number <> 0 Or IsEmpty(upperThresh) Or upperThresh <= lowerThresh Then
+        MsgBox "Invalid input for upper threshold. It must be greater than the lower threshold. Operation cancelled."
+        GoTo CleanExit
+    End If
+    
+    Set startCell = Application.InputBox("Select the starting cell for your data:", Type:=8)
+    If startCell Is Nothing Then
+        MsgBox "Operation cancelled."
+        GoTo CleanExit
+    End If
+    On Error GoTo 0
+    
+    ' Determine the last row with data
+    lastRow = ws.Cells(ws.Rows.count, startCell.Column).End(xlUp).Row
+    
+    ' Set the range to work with
+    Set dataRange = ws.Range(startCell, ws.Cells(lastRow, startCell.Column))
+    
+    ' Apply formatting based on thresholds
+    For Each cell In dataRange
+        ' Check if cell contains a numeric value
+        If IsNumeric(cell.Value) Then
+            Select Case cell.Value
+                Case Is <= lowerThresh
+                    cell.Font.Color = RGB(0, 255, 0) ' Green
+                Case Is >= upperThresh
+                    cell.Font.Color = RGB(255, 0, 0) ' Red
+                ' Remove the Else case to preserve original formatting
+            End Select
+        End If
+        
+        ' Allow Excel to process other events every 1000 cells
+        If cell.Row Mod 1000 = 0 Then
+            DoEvents
+        End If
+    Next cell
+    
+    MsgBox "Formatting completed based on the thresholds."
+
+CleanExit:
+    ' Re-enable screen updating and automatic calculations
+    Application.ScreenUpdating = True
+    Application.Calculation = xlCalculationAutomatic
+End Sub

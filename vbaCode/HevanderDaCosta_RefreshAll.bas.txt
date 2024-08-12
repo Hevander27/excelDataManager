@@ -1,0 +1,139 @@
+Sub RefreshAllData()
+    Dim ws As Worksheet
+    Dim dataRange As Range
+    Dim lastRow As Long, lastColumn As Long
+    Dim tempValue As Variant
+    Dim i As Long
+    Dim queriesToRefresh() As Variant
+    Dim queryObj As WorkbookQuery
+    Dim sqlQuery As String
+    Dim startDateStr As String, endDateStr As String
+    Dim tableStartDate As Date, tableEndDate As Date
+    Dim needsRefresh As Boolean
+    
+    ' Set the worksheet
+    Set ws = Worksheets("Source")
+    
+    ' Initialize array for queries to refresh
+    queriesToRefresh = Array("currQuery", "Query1")
+    
+    ' Get the SQL query from A2
+    sqlQuery = ws.Range("A2").Value
+    
+    ' Extract start and end dates from the SQL query as strings
+    startDateStr = ExtractDateFromSQL(sqlQuery, ">=")
+    endDateStr = ExtractDateFromSQL(sqlQuery, "<=")
+    
+    ' Assume data begins at D4
+    ' Determine the last column and row with data
+    lastColumn = ws.Cells(5, ws.Columns.count).End(xlToLeft).Column
+    lastRow = ws.Cells(ws.Rows.count, 4).End(xlUp).Row
+    
+    ' Get the first and last dates from the table
+    If lastRow >= 5 Then
+        tableStartDate = ws.Cells(5, 4).Value
+        tableEndDate = ws.Cells(lastRow, 4).Value
+        
+        ' Check if the dates match exactly
+        If Format(tableStartDate, "yyyy-mm-dd") = startDateStr And Format(tableEndDate, "yyyy-mm-dd") = endDateStr Then
+            MsgBox "The current table already contains data for the desired date range (" & _
+                   startDateStr & " to " & endDateStr & ")." & vbNewLine & _
+                   "No refresh is needed.", vbInformation, "Data Up to Date"
+            Exit Sub
+        End If
+        
+        ' Attempt truncation
+        needsRefresh = Not truncateScript(ws, startDateStr, endDateStr)
+        If Not needsRefresh Then
+            MsgBox "The table has been truncated to match the desired date range (" & _
+                   startDateStr & " to " & endDateStr & ").", _
+                   vbInformation, "Table Truncated"
+            Exit Sub
+        End If
+    End If
+    
+    ' If we reach here, either truncation wasn't possible or we need a full refresh
+    
+    ' Set and clear the data range in one operation
+    ws.Range(ws.Cells(5, 4), ws.Cells(lastRow, lastColumn)).Interior.ColorIndex = xlNone
+    
+    ' Save the value from A2 to a temporary variable
+    tempValue = ws.Range("A2").Value
+    
+    ' Refresh only the specified queries
+    For i = LBound(queriesToRefresh) To UBound(queriesToRefresh)
+        On Error Resume Next
+        Set queryObj = ThisWorkbook.Queries(CStr(queriesToRefresh(i)))
+        If Not queryObj Is Nothing Then
+            queryObj.Refresh
+        End If
+        On Error GoTo 0
+    Next i
+    
+    ' Wait for the refresh to complete
+    DoEvents
+    
+    ' Put the saved value back into B2
+    ws.Range("B2").Value = tempValue
+End Sub
+
+Function truncateScript(ws As Worksheet, startDateStr As String, endDateStr As String) As Boolean
+    Dim lastRow As Long
+    Dim firstDataRow As Long, lastDataRow As Long
+    Dim i As Long
+    
+    lastRow = ws.Cells(ws.Rows.count, 4).End(xlUp).Row
+    firstDataRow = 5 ' Assuming data starts from row 5
+    
+    ' Find the first row where the date is greater than or equal to startDate
+    For i = 5 To lastRow
+        If Format(ws.Cells(i, 4).Value, "yyyy-mm-dd") >= startDateStr Then
+            firstDataRow = i
+            Exit For
+        End If
+    Next i
+    
+    ' Find the last row where the date is less than or equal to endDate
+    For i = lastRow To 5 Step -1
+        If Format(ws.Cells(i, 4).Value, "yyyy-mm-dd") <= endDateStr Then
+            lastDataRow = i
+            Exit For
+        End If
+    Next i
+    
+    ' Check if we found valid rows and if truncation is needed
+    If firstDataRow > lastRow Or lastDataRow < 5 Or (firstDataRow = 5 And lastDataRow = lastRow) Then
+        truncateScript = False
+        Exit Function
+    End If
+    
+    ' Delete rows after lastDataRow first (to avoid shifting issues)
+    If lastDataRow < lastRow Then
+        ws.Rows((lastDataRow + 1) & ":" & lastRow).Delete
+    End If
+    
+    ' Delete rows before firstDataRow
+    If firstDataRow > 5 Then
+        ws.Rows("5:" & firstDataRow - 1).Delete
+    End If
+    
+    truncateScript = True
+End Function
+
+Function ExtractDateFromSQL(sqlQuery As String, operator As String) As String
+    Dim regex As Object
+    Dim matches As Object
+    
+    Set regex = CreateObject("VBScript.RegExp")
+    regex.Global = False
+    regex.IgnoreCase = True
+    regex.Pattern = "callDate\s*" & operator & "\s*'(\d{4}-\d{2}-\d{2})'"
+    
+    Set matches = regex.Execute(sqlQuery)
+    
+    If matches.count > 0 Then
+        ExtractDateFromSQL = matches(0).SubMatches(0)
+    Else
+        ExtractDateFromSQL = "" ' Return an empty string if not found
+    End If
+End Function
