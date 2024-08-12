@@ -1,0 +1,132 @@
+let
+    // Function to extract and format date from a query text
+    ExtractAndFormatDate = (query, operator) =>
+        let
+            SearchPattern = operator & " '",
+            StartPos = Text.PositionOf(query, SearchPattern) + Text.Length(SearchPattern),
+            DateText = Text.Range(query, StartPos, 10),
+            AsDate = try Date.From(DateText) otherwise null,
+            FormattedDate = if AsDate <> null then Date.ToText(AsDate, "yyyy-MM-dd") else DateText
+        in
+            FormattedDate,
+
+    // Load source data
+    Source = Excel.CurrentWorkbook(){[Name="Query1"]}[Content],
+    FirstColumnName = Table.ColumnNames(Source){0},
+    FirstPopulatedRow = Table.SelectRows(Source, each Record.Field(_, FirstColumnName) <> null){0},
+
+    // Find the last populated row
+    PopulatedRows = Table.SelectRows(Source, each Record.Field(_, FirstColumnName) <> null),
+    LastPopulatedRow = PopulatedRows{Table.RowCount(PopulatedRows) - 1},
+
+    Query1StartDate = Record.Field(FirstPopulatedRow, FirstColumnName),
+    Query1LastDate = Record.Field(LastPopulatedRow, FirstColumnName),
+
+    // Load SQL source from Table6
+    sqlSource = Excel.CurrentWorkbook(){[Name="Table6"]}[Content],
+    SQLText = sqlSource{0}[Query],  // Assuming the column name is "Query"
+
+    // Extract and format dates from SQL
+    SQLStartDate = ExtractAndFormatDate(SQLText, ">="),
+    SQLEndDate = ExtractAndFormatDate(SQLText, "<="),
+
+    // Ensure dates from Query1 are formatted correctly
+    EnsureDateFormat = (dateValue) =>
+        let
+            AsDate = try Date.From(dateValue) otherwise null,
+            FormattedDate = if AsDate <> null then Date.ToText(AsDate, "yyyy-MM-dd") else Text.From(dateValue)
+        in
+            FormattedDate,
+
+    FormattedQuery1StartDate = EnsureDateFormat(Query1StartDate),
+    FormattedQuery1LastDate = EnsureDateFormat(Query1LastDate),
+
+    // Function to add or subtract a day
+    AdjustDate = (dateText, days) =>
+        let
+            AsDate = Date.From(dateText),
+            AdjustedDate = Date.AddDays(AsDate, days),
+            FormattedDate = Date.ToText(AdjustedDate, "yyyy-MM-dd")
+        in
+            FormattedDate,
+
+    // Determine the correct date range to use
+    StartDate = if SQLStartDate = FormattedQuery1StartDate and SQLEndDate > FormattedQuery1LastDate then
+                    AdjustDate(FormattedQuery1LastDate, 1)
+                else if SQLEndDate = FormattedQuery1LastDate and SQLStartDate < FormattedQuery1StartDate then
+                    SQLStartDate
+                else
+                    SQLStartDate,  // Default to SQLStartDate if conditions are not met
+
+    EndDate = if SQLStartDate = FormattedQuery1StartDate and SQLEndDate > FormattedQuery1LastDate then
+                  SQLEndDate
+              else if SQLEndDate = FormattedQuery1LastDate and SQLStartDate < FormattedQuery1StartDate then
+                  AdjustDate(FormattedQuery1StartDate, -1)
+              else
+                  SQLEndDate,  // Default to SQLEndDate if conditions are not met
+
+    // Function to replace dates in SQL query
+    ReplaceDatesInQuery = (query, startDate, endDate) =>
+        let
+            StartPattern = "callDate >= '",
+            EndPattern = "callDate <= '",
+            StartPos = Text.PositionOf(query, StartPattern) + Text.Length(StartPattern),
+            EndPos = Text.PositionOf(query, EndPattern) + Text.Length(EndPattern),
+            OldStartDate = Text.Range(query, StartPos, 10),
+            OldEndDate = Text.Range(query, EndPos, 10),
+            ReplacedStart = Text.Replace(query, OldStartDate, startDate),
+            ReplacedBoth = Text.Replace(ReplacedStart, OldEndDate, endDate)
+        in
+            ReplacedBoth,
+
+    // Modify the SQL query with the new date range
+    ModifiedQuery = ReplaceDatesInQuery(SQLText, StartDate, EndDate),
+
+    DatabaseServer = Excel.CurrentWorkbook(){[Name="Table2"]}[Content]{0}[SERVER],
+    DatabaseName = Excel.CurrentWorkbook(){[Name="Table3"]}[Content]{0}[DATABASE],
+
+
+    // Use the modified query in your SQL connection
+    Query1 = let
+        Source = Sql.Database(DatabaseServer, DatabaseName, [Query=ModifiedQuery]),
+
+        // Get column names
+        ColumnNames = Table.ColumnNames(Source),
+
+        // Function to check if a column is of datetime type
+        IsDateTimeColumn = (columnName) => try Type.Is(type datetime, Value.Type(Table.Column(Source, columnName))) otherwise false,
+
+        // Find the first datetime column
+        DateTimeColumnIndex = List.PositionOf(List.Transform(ColumnNames, each IsDateTimeColumn(_)), true),
+
+        // Reorder and sort in one step if needed
+        FinalTable = if DateTimeColumnIndex <> -1 and DateTimeColumnIndex <> 0 then
+                        let
+                            DateTimeColumn = ColumnNames{DateTimeColumnIndex},
+                            ReorderedColumns = {DateTimeColumn} & 
+                                               List.RemoveItems(ColumnNames, {DateTimeColumn}),
+                            Sorted = Table.Sort(
+                                Table.ReorderColumns(Source, ReorderedColumns),
+                                {{DateTimeColumn, Order.Ascending}}
+                            )
+                        in
+                            Sorted
+                     else if DateTimeColumnIndex = 0 then
+                        Table.Sort(Source, {{ColumnNames{0}, Order.Ascending}})
+                     else
+                        Source
+    in
+        FinalTable meta [
+            EnableFastDataLoad = true,
+            Permission = [
+                Allow = [
+                    NativeDatabaseQuery = true
+                ]
+            ]
+        ],
+
+    // Sort the final table by the first column
+    #"Sorted Rows" = Table.Sort(Query1, {{Table.ColumnNames(Query1){0}, Order.Ascending}})
+
+in
+    #"Sorted Rows"

@@ -1,0 +1,47 @@
+let
+    
+      DatabaseServer = Excel.CurrentWorkbook(){[Name="Table2"]}[Content]{0}[SERVER],
+      DatabaseName = Excel.CurrentWorkbook(){[Name="Table3"]}[Content]{0}[DATABASE],
+
+    Query1 = let
+        
+        Source = Sql.Database(DatabaseServer, DatabaseName, [Query=currQuery]),
+        // Get column names
+        ColumnNames = Table.ColumnNames(Source),
+        
+        // Function to check if a column is of datetime type
+        IsDateTimeColumn = (columnName) => try Type.Is(type datetime, Value.Type(Table.Column(Source, columnName))) otherwise false,
+        
+        // Find the first datetime column
+        DateTimeColumnIndex = List.PositionOf(List.Transform(ColumnNames, each IsDateTimeColumn(_)), true),
+        
+        // Reorder and sort in one step if needed
+        FinalTable = if DateTimeColumnIndex <> -1 and DateTimeColumnIndex <> 0 then
+                        let
+                            DateTimeColumn = ColumnNames{DateTimeColumnIndex},
+                            ReorderedColumns = {DateTimeColumn} & 
+                                               List.RemoveItems(ColumnNames, {DateTimeColumn}),
+                            Sorted = Table.Sort(
+                                Table.ReorderColumns(Source, ReorderedColumns),
+                                {{DateTimeColumn, Order.Ascending}}
+                            )
+                        in
+                            Sorted
+                     else if DateTimeColumnIndex = 0 then
+                        Table.Sort(Source, {{ColumnNames{0}, Order.Ascending}})
+                     else
+                        Source
+    in
+        FinalTable meta [
+            EnableFastDataLoad = true,
+            Permission = [
+                Allow = [
+                    NativeDatabaseQuery = true
+                ]
+            ]
+        ],
+
+    // Sort the final table by the first column, assuming it is the datetime column
+    SortedRows = Table.Sort(Query1, {{Table.ColumnNames(Query1){0}, Order.Ascending}})
+in
+    SortedRows
